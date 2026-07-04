@@ -10,8 +10,8 @@ app.use(cors());
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
-const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
+const LIVEKIT_API_KEY = process.env.APIi4uAvmF3zoeL;
+const LIVEKIT_API_SECRET = process.env.bFBeOkEvfS7HjcTGT8XfX8oFsWF2tBnIewvben8XMq7C;
 
 let waitingUser = null; // { socketId, identity, userName }
 const rooms = {}; // roomId -> [socketId, socketId]
