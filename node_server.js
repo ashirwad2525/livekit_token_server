@@ -13,34 +13,21 @@ const io = new Server(server, { cors: { origin: '*' } });
 const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
 const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
 
-// One waiting user at a time (Omegle-style 1-on-1 pairing).
 let waitingUser = null; // { socketId, identity, userName }
-
-// roomId -> [socketId, socketId], used to notify the other side on leave/disconnect.
-const rooms = {};
+const rooms = {}; // roomId -> [socketId, socketId]
 
 function log(msg) {
   console.log(`[${new Date().toLocaleString()}] ${msg}`);
 }
 
 async function mintToken(roomName, identity) {
-  const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
-    identity,
-    ttl: '1h',
-  });
-  at.addGrant({
-    room: roomName,
-    roomJoin: true,
-    canPublish: true,
-    canSubscribe: true,
-  });
+  const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, { identity, ttl: '1h' });
+  at.addGrant({ room: roomName, roomJoin: true, canPublish: true, canSubscribe: true });
   return at.toJwt();
 }
 
 function clearWaitingIfSelf(socketId) {
-  if (waitingUser && waitingUser.socketId === socketId) {
-    waitingUser = null;
-  }
+  if (waitingUser && waitingUser.socketId === socketId) waitingUser = null;
 }
 
 function notifyPartnerLeft(socketId) {
@@ -65,32 +52,19 @@ io.on('connection', (socket) => {
 
     const candidate = waitingUser;
     const candidateAlive =
-      candidate &&
-      candidate.socketId !== socket.id &&
-      io.sockets.sockets.get(candidate.socketId);
+      candidate && candidate.socketId !== socket.id && io.sockets.sockets.get(candidate.socketId);
 
     if (candidateAlive) {
       waitingUser = null;
       const roomId = randomUUID();
       rooms[roomId] = [socket.id, candidate.socketId];
-
       try {
         const [myToken, theirToken] = await Promise.all([
           mintToken(roomId, identity),
           mintToken(roomId, candidate.identity),
         ]);
-
-        socket.emit('matched', {
-          roomId,
-          token: myToken,
-          peerName: candidate.userName,
-        });
-        io.to(candidate.socketId).emit('matched', {
-          roomId,
-          token: theirToken,
-          peerName: userName,
-        });
-
+        socket.emit('matched', { roomId, token: myToken, peerName: candidate.userName });
+        io.to(candidate.socketId).emit('matched', { roomId, token: theirToken, peerName: userName });
         log(`Matched ${socket.id} <-> ${candidate.socketId} in room ${roomId}`);
       } catch (e) {
         log(`Token mint failed: ${e.message}`);
