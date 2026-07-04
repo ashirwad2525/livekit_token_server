@@ -2,6 +2,7 @@
   "name": "beingle-token-server",
   "version": "1.0.0",
   "main": "node_server.js",
+  "engines": { "node": ">=18" },
   "scripts": { "start": "node node_server.js" },
   "dependencies": {
     "cors": "^2.8.5",
