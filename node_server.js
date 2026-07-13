@@ -13,7 +13,7 @@ const io = new Server(server, { cors: { origin: '*' } });
 const LIVEKIT_API_KEY = process.env.APIi4uAvmF3zoeL;
 const LIVEKIT_API_SECRET = process.env.bFBeOkEvfS7HjcTGT8XfX8oFsWF2tBnIewvben8XMq7C;
 
-let waitingUser = null; // { socketId, identity, userName }
+let waitingUsers = { video: null, audio: null }; // callType -> { socketId, identity, userName }
 const rooms = {}; // roomId -> [socketId, socketId]
 
 function log(msg) {
@@ -27,7 +27,11 @@ async function mintToken(roomName, identity) {
 }
 
 function clearWaitingIfSelf(socketId) {
-  if (waitingUser && waitingUser.socketId === socketId) waitingUser = null;
+  for (const type of Object.keys(waitingUsers)) {
+    if (waitingUsers[type] && waitingUsers[type].socketId === socketId) {
+      waitingUsers[type] = null;
+    }
+  }
 }
 
 function notifyPartnerLeft(socketId) {
@@ -46,16 +50,20 @@ function notifyPartnerLeft(socketId) {
 io.on('connection', (socket) => {
   log(`Connected: ${socket.id}`);
 
-  socket.on('find_partner', async ({ identity, userName }) => {
+  socket.on('find_partner', async ({ identity, userName, callType }) => {
+    // Default + validate callType so bad/missing values don't cross-match
+    const type = callType === 'audio' ? 'audio' : 'video';
+
     socket.data.identity = identity;
     socket.data.userName = userName;
+    socket.data.callType = type;
 
-    const candidate = waitingUser;
+    const candidate = waitingUsers[type];
     const candidateAlive =
       candidate && candidate.socketId !== socket.id && io.sockets.sockets.get(candidate.socketId);
 
     if (candidateAlive) {
-      waitingUser = null;
+      waitingUsers[type] = null;
       const roomId = randomUUID();
       rooms[roomId] = [socket.id, candidate.socketId];
       try {
@@ -65,15 +73,15 @@ io.on('connection', (socket) => {
         ]);
         socket.emit('matched', { roomId, token: myToken, peerName: candidate.userName });
         io.to(candidate.socketId).emit('matched', { roomId, token: theirToken, peerName: userName });
-        log(`Matched ${socket.id} <-> ${candidate.socketId} in room ${roomId}`);
+        log(`Matched (${type}) ${socket.id} <-> ${candidate.socketId} in room ${roomId}`);
       } catch (e) {
         log(`Token mint failed: ${e.message}`);
         socket.emit('match_error', 'Failed to create call');
         delete rooms[roomId];
       }
     } else {
-      waitingUser = { socketId: socket.id, identity, userName };
-      log(`Waiting: ${socket.id}`);
+      waitingUsers[type] = { socketId: socket.id, identity, userName };
+      log(`Waiting (${type}): ${socket.id}`);
     }
   });
 
