@@ -7,71 +7,23 @@ const { randomUUID } = require('crypto');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
-
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*' },
-});
+const io = new Server(server, { cors: { origin: '*' } });
 
-const AUDIO_LIVEKIT_URL =
-  process.env.LIVEKIT_AUDIO_URL || 'wss://livekit.yourdomain.com';
-const AUDIO_LIVEKIT_API_KEY = process.env.LIVEKIT_AUDIO_API_KEY;
-const AUDIO_LIVEKIT_API_SECRET = process.env.LIVEKIT_AUDIO_API_SECRET;
+const LIVEKIT_API_KEY = process.env.APIi4uAvmF3zoeL;
+const LIVEKIT_API_SECRET = process.env.bFBeOkEvfS7HjcTGT8XfX8oFsWF2tBnIewvben8XMq7C;
 
-const VIDEO_LIVEKIT_URL =
-  process.env.LIVEKIT_VIDEO_URL || 'wss://beingle-mwlb5tsa.livekit.cloud';
-const VIDEO_LIVEKIT_API_KEY = process.env.LIVEKIT_VIDEO_API_KEY;
-const VIDEO_LIVEKIT_API_SECRET = process.env.LIVEKIT_VIDEO_API_SECRET;
-
-let waitingUsers = { video: null, audio: null };
-const rooms = {};
+let waitingUsers = { video: null, audio: null }; // callType -> { socketId, identity, userName }
+const rooms = {}; // roomId -> [socketId, socketId]
 
 function log(msg) {
   console.log(`[${new Date().toLocaleString()}] ${msg}`);
 }
 
-function getLiveKitConfig(callType) {
-  if (callType === 'audio') {
-    return {
-      url: AUDIO_LIVEKIT_URL,
-      apiKey: AUDIO_LIVEKIT_API_KEY,
-      apiSecret: AUDIO_LIVEKIT_API_SECRET,
-    };
-  }
-
-  return {
-    url: VIDEO_LIVEKIT_URL,
-    apiKey: VIDEO_LIVEKIT_API_KEY,
-    apiSecret: VIDEO_LIVEKIT_API_SECRET,
-  };
-}
-
-async function mintToken(roomName, identity, callType) {
-  const cfg = getLiveKitConfig(callType);
-
-  if (!cfg.apiKey || !cfg.apiSecret || !cfg.url) {
-    throw new Error(`Missing LiveKit config for ${callType}`);
-  }
-
-  const at = new AccessToken(cfg.apiKey, cfg.apiSecret, {
-    identity,
-    ttl: '1h',
-  });
-
-  at.addGrant({
-    room: roomName,
-    roomJoin: true,
-    canPublish: true,
-    canSubscribe: true,
-  });
-
-  const token = await at.toJwt();
-
-  return {
-    token,
-    livekitUrl: cfg.url,
-  };
+async function mintToken(roomName, identity) {
+  const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, { identity, ttl: '1h' });
+  at.addGrant({ room: roomName, roomJoin: true, canPublish: true, canSubscribe: true });
+  return at.toJwt();
 }
 
 function clearWaitingIfSelf(socketId) {
@@ -99,6 +51,7 @@ io.on('connection', (socket) => {
   log(`Connected: ${socket.id}`);
 
   socket.on('find_partner', async ({ identity, userName, callType }) => {
+    // Default + validate callType so bad/missing values don't cross-match
     const type = callType === 'audio' ? 'audio' : 'video';
 
     socket.data.identity = identity;
@@ -107,40 +60,23 @@ io.on('connection', (socket) => {
 
     const candidate = waitingUsers[type];
     const candidateAlive =
-      candidate &&
-      candidate.socketId !== socket.id &&
-      io.sockets.sockets.get(candidate.socketId);
+      candidate && candidate.socketId !== socket.id && io.sockets.sockets.get(candidate.socketId);
 
     if (candidateAlive) {
       waitingUsers[type] = null;
       const roomId = randomUUID();
       rooms[roomId] = [socket.id, candidate.socketId];
-
       try {
-        const [myJoin, theirJoin] = await Promise.all([
-          mintToken(roomId, identity, type),
-          mintToken(roomId, candidate.identity, type),
+        const [myToken, theirToken] = await Promise.all([
+          mintToken(roomId, identity),
+          mintToken(roomId, candidate.identity),
         ]);
-
-        socket.emit('matched', {
-          roomId,
-          token: myJoin.token,
-          livekitUrl: myJoin.livekitUrl,
-          peerName: candidate.userName,
-        });
-
-        io.to(candidate.socketId).emit('matched', {
-          roomId,
-          token: theirJoin.token,
-          livekitUrl: theirJoin.livekitUrl,
-          peerName: userName,
-        });
-
+        socket.emit('matched', { roomId, token: myToken, peerName: candidate.userName });
+        io.to(candidate.socketId).emit('matched', { roomId, token: theirToken, peerName: userName });
         log(`Matched (${type}) ${socket.id} <-> ${candidate.socketId} in room ${roomId}`);
       } catch (e) {
-        log(`Token mint failed for ${type}: ${e.message}`);
+        log(`Token mint failed: ${e.message}`);
         socket.emit('match_error', 'Failed to create call');
-        io.to(candidate.socketId).emit('match_error', 'Failed to create call');
         delete rooms[roomId];
       }
     } else {
